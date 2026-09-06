@@ -1,1 +1,197 @@
 @import "tailwindcss";
+
+:root {
+  --gold: #e8c547;
+  --gold-soft: #f0d878;
+  --gold-dim: #a58a2c;
+  --ink: #1d1708;
+  --paper: #f5e6b0;
+}
+
+* {
+  -webkit-tap-highlight-color: transparent;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+  overflow: hidden;
+}
+
+body {
+  font-family: "Rubik", sans-serif;
+  background: #171208;
+  color: var(--paper);
+  user-select: none;
+  -webkit-user-select: none;
+  touch-action: none;
+}
+
+.font-display {
+  font-family: "Russo One", "Rubik", sans-serif;
+}
+
+canvas {
+  display: block;
+  touch-action: none;
+}
+
+/* ── ornate reaper button ─────────────────────────── */
+.btn-rz {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.75rem;
+  width: 100%;
+  padding: 1rem 1.25rem;
+  border: 2px solid var(--gold);
+  color: var(--gold-soft);
+  background: rgba(23, 18, 8, 0.35);
+  font-family: "Russo One", sans-serif;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  cursor: pointer;
+  transition:
+    transform 120ms cubic-bezier(0.34, 1.56, 0.64, 1),
+    background-color 120ms ease,
+    color 120ms ease,
+    box-shadow 120ms ease;
+}
+.btn-rz::before,
+.btn-rz::after {
+  content: "";
+  position: absolute;
+  left: 14px;
+  right: 14px;
+  height: 3px;
+  background: repeating-linear-gradient(
+    90deg,
+    currentColor 0 7px,
+    transparent 7px 13px
+  );
+  opacity: 0.55;
+  pointer-events: none;
+}
+.btn-rz::before {
+  top: 5px;
+}
+.btn-rz::after {
+  bottom: 5px;
+}
+.btn-rz.pressed,
+.btn-rz:active {
+  background: var(--gold);
+  color: #ffffff;
+  transform: scale(1.06);
+  box-shadow: 0 0 0 4px rgba(232, 197, 71, 0.25), 0 10px 30px rgba(0, 0, 0, 0.45);
+}
+
+/* ── hud panel ─────────────────────────────────────── */
+.hud-panel {
+  background: rgba(24, 18, 7, 0.82);
+  border: 1px solid rgba(232, 197, 71, 0.55);
+  box-shadow: 0 4px 18px rgba(0, 0, 0, 0.4);
+}
+
+@keyframes rz-pop {
+  0% {
+    transform: scale(0.6);
+    opacity: 0;
+  }
+  60% {
+    transform: scale(1.08);
+    opacity: 1;
+  }
+  100% {
+    transform: scale(1);
+    opacity: 1;
+  }
+}
+.anim-pop {
+  animation: rz-pop 320ms cubic-bezier(0.34, 1.56, 0.64, 1) both;
+}
+
+@keyframes rz-fade {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+.anim-fade {
+  animation: rz-fade 400ms ease both;
+}
+
+@keyframes rz-region {
+  0% {
+    opacity: 0;
+    transform: translateY(-14px) scale(0.9);
+    letter-spacing: 0.5em;
+  }
+  20% {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+  80% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 0.85;
+  }
+}
+.anim-region {
+  animation: rz-region 900ms cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+@keyframes rz-shake {
+  0%,
+  100% {
+    transform: translateX(0);
+  }
+  20% {
+    transform: translateX(-6px);
+  }
+  40% {
+    transform: translateX(6px);
+  }
+  60% {
+    transform: translateX(-4px);
+  }
+  80% {
+    transform: translateX(4px);
+  }
+}
+.anim-shake {
+  animation: rz-shake 300ms ease both;
+}
+
+@keyframes rz-pulse {
+  0%,
+  100% {
+    transform: scale(1);
+  }
+  50% {
+    transform: scale(1.12);
+  }
+}
+.anim-pulse-soft {
+  animation: rz-pulse 1.6s ease-in-out infinite;
+}
+
+@keyframes rz-blink {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.35;
+  }
+}
+.anim-blink {
+  animation: rz-blink 1.2s ease-in-out infinite;
+}
