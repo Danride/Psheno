@@ -90,6 +90,15 @@ class ReaperAudio {
   dash() {
     this.noise(0.22, 0.16, 1800, "bandpass");
   }
+  block() {
+    this.tone(1250, 0.09, "square", 0.15, 900);
+    this.tone(2400, 0.05, "square", 0.08, 1800);
+    this.noise(0.06, 0.18, 3200, "highpass");
+  }
+  stun() {
+    this.tone(560, 0.5, "sawtooth", 0.12, 120);
+    this.tone(420, 0.5, "triangle", 0.1, 90, 0.04);
+  }
   pickup() {
     this.tone(700, 0.08, "sine", 0.15, 1180);
     this.tone(1400, 0.1, "sine", 0.1, 1900, 0.06);

@@ -248,36 +248,63 @@ function GameCore(props: {
             </div>
             {hint && !over && (
               <div className="anim-fade max-w-64 text-[11px] leading-snug text-[#f5e6b0]/75">
-                Веди пальцем — движение.
+                Веди пальцем — движение. Двойной тап — <span className="font-bold text-[#e8c547]">рывок</span>.
                 <br />
-                Двойной тап — <span className="font-bold text-[#e8c547]">рывок</span>. Кирка крутится сама — подставляй её под врага.
+                <span className="font-bold text-[#f0d878]">Блок</span> отражает удар: враг замирает на 2с. Бьёт вся палка — наконечник сильнее.
               </div>
             )}
           </div>
 
-          {/* кнопка рывка */}
-          <button
-            className={`pointer-events-auto relative flex size-[76px] flex-col items-center justify-center overflow-hidden rounded-full border-2 transition-transform active:scale-95 ${
-              (snap?.dashReady ?? 0) >= 1 ? "border-[#e8c547] text-[#f0d878]" : "border-[#a58a2c]/60 text-[#a58a2c]"
-            }`}
-            style={{ background: "rgba(24,18,7,0.82)" }}
-            onPointerDown={(e) => {
-              e.stopPropagation();
-              e.preventDefault();
-              audio.ensure();
-              engineRef.current?.tryDash();
-            }}
-            aria-label="рывок"
-          >
-            <span
-              className="absolute bottom-0 left-0 right-0 bg-[#e8c547]/25"
-              style={{ height: `${Math.round((snap?.dashReady ?? 1) * 100)}%` }}
-            />
-            <svg viewBox="0 0 20 20" className="relative size-6" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-              <path d="M3 10h12M10 4.5L16 10l-6 5.5" />
-            </svg>
-            <span className="relative font-display text-[9px] tracking-[0.2em]">РЫВОК</span>
-          </button>
+          {/* кнопки навыков */}
+          <div className="flex items-end gap-2">
+            {/* блок */}
+            <button
+              className={`pointer-events-auto relative flex size-[64px] flex-col items-center justify-center overflow-hidden rounded-full border-2 transition-transform active:scale-95 ${
+                (snap?.blockReady ?? 0) >= 1 ? "border-[#f0d878] text-[#f0d878]" : "border-[#a58a2c]/60 text-[#a58a2c]"
+              }`}
+              style={{ background: "rgba(24,18,7,0.82)" }}
+              onPointerDown={(e) => {
+                e.stopPropagation();
+                e.preventDefault();
+                audio.ensure();
+                engineRef.current?.tryBlock();
+              }}
+              aria-label="блок"
+            >
+              <span
+                className="absolute bottom-0 left-0 right-0 bg-[#f0d878]/25"
+                style={{ height: `${Math.round((snap?.blockReady ?? 1) * 100)}%` }}
+              />
+              <svg viewBox="0 0 20 20" className="relative size-5" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M10 2.2l6 2.4v4.6c0 4-2.8 6.6-6 8-3.2-1.4-6-4-6-8V4.6z" />
+                <path d="M7 10l2.2 2.2L13.5 8" />
+              </svg>
+              <span className="relative font-display text-[8px] tracking-[0.18em]">БЛОК</span>
+            </button>
+            {/* рывок */}
+            <button
+              className={`pointer-events-auto relative flex size-[76px] flex-col items-center justify-center overflow-hidden rounded-full border-2 transition-transform active:scale-95 ${
+                (snap?.dashReady ?? 0) >= 1 ? "border-[#e8c547] text-[#f0d878]" : "border-[#a58a2c]/60 text-[#a58a2c]"
+              }`}
+              style={{ background: "rgba(24,18,7,0.82)" }}
+              onPointerDown={(e) => {
+                e.stopPropagation();
+                e.preventDefault();
+                audio.ensure();
+                engineRef.current?.tryDash();
+              }}
+              aria-label="рывок"
+            >
+              <span
+                className="absolute bottom-0 left-0 right-0 bg-[#e8c547]/25"
+                style={{ height: `${Math.round((snap?.dashReady ?? 1) * 100)}%` }}
+              />
+              <svg viewBox="0 0 20 20" className="relative size-6" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M3 10h12M10 4.5L16 10l-6 5.5" />
+              </svg>
+              <span className="relative font-display text-[9px] tracking-[0.2em]">РЫВОК</span>
+            </button>
+          </div>
         </div>
       </div>
 

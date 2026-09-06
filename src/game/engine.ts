@@ -114,10 +114,14 @@ interface Reaper {
   hp: number; maxHp: number; lastHurt: number;
   dashT: number; dashCd: number; dashDx: number; dashDy: number;
   speedT: number; magnetT: number; shieldT: number; shieldHits: number; rageT: number;
+  blockT: number; blockCd: number; stunT: number;
   alive: boolean; respawnT: number; deathHandled: boolean;
   kills: number; harvests: number; coinsRun: number;
   skill: number; // «скилл» бота 0.5–1.5, у игрока 1
-  ai: { thinkT: number; tx: number; ty: number; state: "farm" | "hunt" | "flee"; farmT: number };
+  ai: {
+    thinkT: number; tx: number; ty: number; state: "farm" | "hunt" | "flee"; farmT: number;
+    orbitA: number; orbit: number; orbitR: number;
+  };
 }
 
 /* ─────────────────────────── hud / result ─────────────────────────── */
@@ -126,7 +130,7 @@ export interface HudSnapshot {
   time: number; level: number; xp: number; xpNeed: number;
   hp: number; maxHp: number; score: number;
   coinsRun: number; kills: number; harvests: number; alive: number;
-  regionName: string; dashReady: number;
+  regionName: string; dashReady: number; blockReady: number;
   buffs: { id: BuffId; t: number }[];
   board: { name: string; score: number; you: boolean }[];
 }
@@ -141,6 +145,12 @@ const rand = (a: number, b: number) => a + Math.random() * (b - a);
 const clamp = (v: number, a: number, b: number) => Math.min(b, Math.max(a, v));
 const dist2 = (ax: number, ay: number, bx: number, by: number) => {
   const dx = ax - bx, dy = ay - by;
+  return dx * dx + dy * dy;
+};
+const segDist2 = (px: number, py: number, ax: number, ay: number, bx: number, by: number) => {
+  const abx = bx - ax, aby = by - ay;
+  const t = clamp(((px - ax) * abx + (py - ay) * aby) / (abx * abx + aby * aby || 1), 0, 1);
+  const dx = px - (ax + abx * t), dy = py - (ay + aby * t);
   return dx * dx + dy * dy;
 };
 
@@ -337,9 +347,13 @@ export class Engine {
         hitCd: 0, hp: 102, maxHp: 102, lastHurt: -10,
         dashT: 0, dashCd: rand(0, 2), dashDx: 0, dashDy: 0,
         speedT: 0, magnetT: 0, shieldT: 0, shieldHits: 0, rageT: 0,
+        blockT: 0, blockCd: rand(0, 1.5), stunT: 0,
         alive: true, respawnT: 0, deathHandled: false,
         kills: 0, harvests: 0, coinsRun: 0,
-        ai: { thinkT: rand(0, 0.3), tx: x, ty: y, state: "farm", farmT: 0 },
+        ai: {
+          thinkT: rand(0, 0.3), tx: x, ty: y, state: "farm", farmT: 0,
+          orbitA: rand(0, Math.PI * 2), orbit: Math.random() < 0.5 ? -1 : 1, orbitR: rand(70, 150),
+        },
         skill: isPlayer ? 1 : rand(0.5, 1.5),
       };
     };
@@ -412,6 +426,9 @@ export class Engine {
       e.preventDefault();
       this.tryDash();
     }
+    if (e.code === "KeyQ" || e.code === "KeyE") {
+      this.tryBlock();
+    }
   };
   private onKeyUp = (e: KeyboardEvent) => this.keys.delete(e.code);
 
@@ -457,9 +474,25 @@ export class Engine {
     this.inputX = 0; this.inputY = 0;
   };
 
+  tryBlock() {
+    const r = this.player;
+    if (!r.alive || r.blockCd > 0 || r.stunT > 0 || this.over) return;
+    r.blockT = 0.55;
+    r.blockCd = 3.2;
+    audio.block();
+    for (let i = 0; i < 8; i++) {
+      const a = rand(0, Math.PI * 2);
+      this.particles.push({
+        x: r.x + Math.cos(a) * (r.radius + 8), y: r.y + Math.sin(a) * (r.radius + 8),
+        vx: Math.cos(a) * rand(30, 90), vy: Math.sin(a) * rand(30, 90),
+        g: 0, t: 0, max: rand(0.2, 0.35), size: rand(2, 3.5), color: "#f0d878", kind: "spark",
+      });
+    }
+  }
+
   tryDash() {
     const r = this.player;
-    if (!r.alive || r.dashCd > 0 || this.over) return;
+    if (!r.alive || r.dashCd > 0 || r.stunT > 0 || this.over) return;
     let dx = this.inputX, dy = this.inputY;
     if (Math.hypot(dx, dy) < 0.2) { dx = Math.cos(r.dir); dy = Math.sin(r.dir); }
     const len = Math.hypot(dx, dy);
@@ -556,11 +589,23 @@ export class Engine {
     // таймеры
     r.hitCd = Math.max(0, r.hitCd - dt);
     r.dashCd = Math.max(0, r.dashCd - dt);
+    r.blockT = Math.max(0, r.blockT - dt);
+    r.blockCd = Math.max(0, r.blockCd - dt);
     r.speedT = Math.max(0, r.speedT - dt);
     r.magnetT = Math.max(0, r.magnetT - dt);
     r.rageT = Math.max(0, r.rageT - dt);
     if (r.shieldT > 0) { r.shieldT -= dt; if (r.shieldT <= 0) r.shieldHits = 0; }
     if (this.time - r.lastHurt > 3.5) r.hp = Math.min(r.maxHp, r.hp + (r.maxHp * 0.03) * dt * 2);
+
+    // оглушение после неудачной атаки в блок: жнец замирает
+    if (r.stunT > 0) {
+      r.stunT -= dt;
+      r.vx *= Math.max(0, 1 - dt * 9);
+      r.vy *= Math.max(0, 1 - dt * 9);
+      r.x += r.vx * dt; r.y += r.vy * dt;
+      [r.x, r.y] = clampToWorld(r.x, r.y);
+      return; // кирка не крутится, не жнёт и не бьёт
+    }
 
     // кирка крутится асинхронно
     r.theta += r.omega * (r.rageT > 0 ? 1.6 : 1) * dt;
@@ -577,6 +622,23 @@ export class Engine {
       const dx = r.ai.tx - r.x, dy = r.ai.ty - r.y;
       const l = Math.hypot(dx, dy);
       if (l > 24) { ix = dx / l; iy = dy / l; }
+      // расталкивание: боты не слипаются в кучу
+      let sx = 0, sy = 0;
+      for (const o of this.reapers) {
+        if (o === r || !o.alive) continue;
+        const d2 = dist2(r.x, r.y, o.x, o.y);
+        if (d2 < 190 * 190 && d2 > 0.01) {
+          const d = Math.sqrt(d2);
+          const f = (190 - d) / 190;
+          sx += ((r.x - o.x) / d) * f;
+          sy += ((r.y - o.y) / d) * f;
+        }
+      }
+      if (sx || sy) {
+        ix += sx * 1.5; iy += sy * 1.5;
+        const nl = Math.hypot(ix, iy) || 1;
+        ix /= nl; iy /= nl;
+      }
     }
 
     const sp = this.speedOf(r);
@@ -743,23 +805,34 @@ export class Engine {
       if (d < nd) { nd = d; near = o; }
     }
 
+    // враг рядом — иногда успеваем выставить блок
+    if (near && r.blockCd <= 0 && nd < (r.radius + near.radius + 160) ** 2 && Math.random() < 0.06 + 0.1 * sk) {
+      r.blockT = 0.55;
+      r.blockCd = rand(2.4, 3.8);
+    }
+
     // порог страха зависит от скилла: умелые жнецы храбрее
     if (near && near.level > r.level * (0.8 + 0.45 * sk)) {
-      // опаснее нас — убегаем
+      // опаснее нас — убегаем, виляя, чтобы не влететь в толпу
       r.ai.state = "flee";
       const d = Math.sqrt(nd) || 1;
-      r.ai.tx = r.x + ((r.x - near.x) / d) * 360;
-      r.ai.ty = r.y + ((r.y - near.y) / d) * 360;
+      const away = Math.atan2(r.y - near.y, r.x - near.x);
+      const weave = away + Math.sin(this.time * 2.2 + r.id * 1.7) * 0.65;
+      r.ai.tx = r.x + Math.cos(weave) * 380;
+      r.ai.ty = r.y + Math.sin(weave) * 380;
       if (r.dashCd <= 0 && nd < 280 * 280 && Math.random() < 0.6) {
-        r.dashDx = (r.x - near.x) / d; r.dashDy = (r.y - near.y) / d;
+        r.dashDx = Math.cos(weave); r.dashDy = Math.sin(weave);
         r.dashT = 0.22; r.dashCd = 2.5;
         if (Math.random() < 0.3) audio.dash();
       }
     } else if (near && Math.random() < 0.55 + 0.35 * sk) {
-      // агрессия: охотимся на всех, кто не страшнее нас
+      // агрессия: охотимся, но маневрируем — кружим вокруг цели
       r.ai.state = "hunt";
-      r.ai.tx = near.x + near.vx * 0.35;
-      r.ai.ty = near.y + near.vy * 0.35;
+      r.ai.orbitA += dt * (1.1 + sk * 0.8) * r.ai.orbit;
+      if (Math.random() < 0.035) r.ai.orbit = -r.ai.orbit; // резко меняем сторону обхода
+      const orbitR = 55 + (1.5 - sk) * 95; // скилловые жмутся ближе к цели
+      r.ai.tx = near.x + near.vx * 0.35 + Math.cos(r.ai.orbitA) * orbitR;
+      r.ai.ty = near.y + near.vy * 0.35 + Math.sin(r.ai.orbitA) * orbitR;
       const d = Math.sqrt(nd) || 1;
       if (r.dashCd <= 0 && nd > 160 * 160 && Math.random() < 0.2 + 0.3 * sk) {
         r.dashDx = (near.x - r.x) / d; r.dashDy = (near.y - r.y) / d;
@@ -788,13 +861,18 @@ export class Engine {
     const reached = dist2(r.x, r.y, r.ai.tx, r.ai.ty) < 50 * 50;
     if (reached || r.ai.farmT <= 0) {
       r.ai.farmT = rand(2.2, 4);
-      // ищем колосья: сэмплим случайные из всех
-      let best: WheatStalk | null = null; let bd = Infinity;
-      for (let i = 0; i < 16; i++) {
+      // ищем колосья: ближе к нам и подальше от других жнецов — не кучкуемся
+      let best: WheatStalk | null = null; let bs = -Infinity;
+      for (let i = 0; i < 12; i++) {
         const w = this.wheatAll[Math.floor(Math.random() * this.wheatAll.length)];
         if (w.dead || w.stage < 0.5) continue;
-        const d = dist2(r.x, r.y, w.x, w.y);
-        if (d < bd) { bd = d; best = w; }
+        let crowded = 0;
+        for (const o of this.reapers) {
+          if (o === r || !o.alive) continue;
+          if (dist2(o.x, o.y, w.x, w.y) < 340 * 340) { crowded++; if (crowded > 2) break; }
+        }
+        const s = -dist2(r.x, r.y, w.x, w.y) - crowded * 600000;
+        if (s > bs) { bs = s; best = w; }
       }
       if (best) { r.ai.tx = best.x + rand(-30, 30); r.ai.ty = best.y + rand(-30, 30); }
       else { [r.ai.tx, r.ai.ty] = this.randomPoint(); }
@@ -826,6 +904,7 @@ export class Engine {
     this.applyLevel(r); r.hp = r.maxHp;
     r.alive = true; r.deathHandled = false;
     r.speedT = 0; r.magnetT = 0; r.shieldT = 0; r.shieldHits = 0; r.rageT = 0;
+    r.blockT = 0; r.blockCd = rand(0.5, 1.5); r.stunT = 0;
     r.dashCd = rand(1, 3) / r.skill;
   }
 
@@ -833,18 +912,23 @@ export class Engine {
 
   private resolveCombat() {
     const rs = this.reapers;
-    // урон только от наконечника кирки
+    // урон от всей палки: наконечник — в полную силу, древко — на 70%
     for (const a of rs) {
-      if (!a.alive) continue;
+      if (!a.alive || a.stunT > 0) continue;
       const hx = a.x + Math.cos(a.theta) * a.pickLen;
       const hy = a.y + Math.sin(a.theta) * a.pickLen;
+      const sx = a.x + Math.cos(a.theta) * a.radius * 0.5;
+      const sy = a.y + Math.sin(a.theta) * a.radius * 0.5;
       for (const v of rs) {
         if (v === a || !v.alive) continue;
-        if (dist2(hx, hy, v.x, v.y) < (v.radius + 7) ** 2) {
+        const tipHit = dist2(hx, hy, v.x, v.y) < (v.radius + 7) ** 2;
+        const rodHit = !tipHit && segDist2(v.x, v.y, sx, sy, hx, hy) < (v.radius + 5) ** 2;
+        if (tipHit || rodHit) {
           if (a.hitCd <= 0) {
             a.hitCd = 0.55;
             let dmg = 13 + a.level * 3.2;
             if (a.rageT > 0) dmg *= 2;
+            if (rodHit) dmg *= 0.7;
             this.hurt(v, a, dmg, hx, hy);
           }
           break;
@@ -872,6 +956,27 @@ export class Engine {
   }
 
   private hurt(v: Reaper, a: Reaper, dmg: number, hx: number, hy: number) {
+    // удачный блок: урона нет, атакующий замирает на 2 секунды
+    if (v.blockT > 0) {
+      v.blockT = 0;
+      v.blockCd = Math.max(v.blockCd, 1.4);
+      a.stunT = 2; a.dashT = 0; a.vx = 0; a.vy = 0;
+      this.particles.push({ x: v.x, y: v.y, vx: 0, vy: 0, g: 0, t: 0, max: 0.45, size: v.radius + 10, color: "#f0d878", kind: "ring" });
+      for (let i = 0; i < 8; i++) {
+        this.particles.push({ x: hx, y: hy, vx: rand(-140, 140), vy: rand(-140, 140), g: 0, t: 0, max: rand(0.2, 0.4), size: rand(2, 3.5), color: "#ffffff", kind: "spark" });
+      }
+      audio.block();
+      if (v.isPlayer) {
+        this.texts.push({ x: v.x, y: v.y - v.radius - 26, txt: "БЛОК!", color: "#f0d878", t: 0, big: true });
+        this.shakeT = Math.max(this.shakeT, 0.15); this.shakeAmp = 4;
+      }
+      if (a.isPlayer) {
+        audio.stun();
+        this.texts.push({ x: a.x, y: a.y - a.radius - 26, txt: "ОГЛУШЁН", color: "#b9c9d6", t: 0, big: true });
+        this.flash = Math.max(this.flash, 0.3);
+      }
+      return;
+    }
     if (v.shieldHits > 0) {
       v.shieldHits--;
       if (v.shieldHits <= 0) v.shieldT = 0;
@@ -990,7 +1095,9 @@ export class Engine {
       hp: Math.max(0, p.hp), maxHp: p.maxHp, score: p.score,
       coinsRun: p.coinsRun, kills: p.kills, harvests: p.harvests,
       alive: this.reapers.filter((r) => r.alive).length,
-      regionName, dashReady: p.dashCd <= 0 ? 1 : 1 - p.dashCd / 2.4,
+      regionName,
+      dashReady: p.dashCd <= 0 ? 1 : 1 - p.dashCd / 2.4,
+      blockReady: p.blockCd <= 0 ? 1 : 1 - p.blockCd / 3.2,
       buffs, board,
     });
   }
@@ -1261,6 +1368,14 @@ export class Engine {
       ctx.beginPath(); ctx.arc(r.x, r.y, r.radius + 9, this.time * 2, this.time * 2 + Math.PI * 2); ctx.stroke();
       ctx.setLineDash([]);
     }
+    if (r.blockT > 0) {
+      // золотые дуги блока, вращающиеся вокруг тела
+      const ba = this.time * 7;
+      ctx.strokeStyle = "rgba(240,216,120,0.95)";
+      ctx.lineWidth = 4;
+      ctx.beginPath(); ctx.arc(r.x, r.y, r.radius + 7, ba, ba + Math.PI * 0.7); ctx.stroke();
+      ctx.beginPath(); ctx.arc(r.x, r.y, r.radius + 7, ba + Math.PI, ba + Math.PI * 1.7); ctx.stroke();
+    }
 
     // тело
     ctx.fillStyle = r.skin.body;
@@ -1272,6 +1387,24 @@ export class Engine {
     ctx.strokeStyle = "rgba(23,18,8,0.55)";
     ctx.lineWidth = 2.5;
     ctx.beginPath(); ctx.arc(r.x, r.y, r.radius, 0, Math.PI * 2); ctx.stroke();
+
+    // оглушение: серая пелена и звёзды над головой
+    if (r.stunT > 0) {
+      ctx.fillStyle = "rgba(23,18,8,0.3)";
+      ctx.beginPath(); ctx.arc(r.x, r.y, r.radius, 0, Math.PI * 2); ctx.fill();
+      for (let i = 0; i < 3; i++) {
+        const sa = this.time * 4.5 + i * ((Math.PI * 2) / 3);
+        const sx = r.x + Math.cos(sa) * (r.radius + 8);
+        const sy = r.y - r.radius - 6 + Math.sin(sa) * 5;
+        ctx.save();
+        ctx.translate(sx, sy);
+        ctx.rotate(sa);
+        ctx.fillStyle = "#f0d878";
+        ctx.fillRect(-3.4, -1.1, 6.8, 2.2);
+        ctx.fillRect(-1.1, -3.4, 2.2, 6.8);
+        ctx.restore();
+      }
+    }
 
     // глаза
     const ex = Math.cos(r.dir) * r.radius * 0.45, ey = Math.sin(r.dir) * r.radius * 0.45;
