@@ -3,16 +3,19 @@ import { BOT_SKIN_IDS, skinById, type SkinDef } from "./skins";
 
 /* ─────────────────────────── world constants ─────────────────────────── */
 
-const CELL = 1400; // размер одной области (5×5 чанков по 280)
+const CELL = 1400; // размер одной клетки (5×5 чанков по 280)
 const CHUNK = 280;
-const WORLD = CELL * 3;
-const CROSS: ReadonlyArray<readonly [number, number]> = [
-  [1, 0], // север
-  [0, 1], // запад
-  [1, 1], // центр
-  [2, 1], // восток
-  [1, 2], // юг
-];
+const GRID = 3; // 3×3 клетки — визуально квадрат
+const WORLD = CELL * GRID;
+
+// область клетки: 0 центр, 1 север, 2 юг, 3 запад, 4 восток
+const cellRegion = (cx: number, cy: number): number => {
+  if (cy === 0) return 1;
+  if (cy === GRID - 1) return 2;
+  if (cx === 0) return 3;
+  if (cx === GRID - 1) return 4;
+  return 0;
+};
 
 type BonusType = "speed" | "magnet" | "shield" | "rage" | "coin" | "heart";
 export type BuffId = "speed" | "magnet" | "shield" | "rage";
@@ -21,14 +24,15 @@ interface RegionDef {
   id: string;
   name: string;
   sub: string;
-  cx: number;
-  cy: number;
+  cells: ReadonlyArray<readonly [number, number]>;
+  anchor: readonly [number, number];
   ground: string;
   groundAlt: string;
   wheatStalk: string;
   wheatHead: string;
   wheatXp: number;
-  density: number;
+  wheatMin: number;
+  wheatMax: number;
   grow: number; // секунд до полного роста
   catCount: number;
   catColor: string;
@@ -39,42 +43,42 @@ interface RegionDef {
 const REGIONS: RegionDef[] = [
   {
     id: "center", name: "Центровое поле", sub: "золото · монеты",
-    cx: 1, cy: 1,
+    cells: [[1, 1]], anchor: [1, 1],
     ground: "#b3913c", groundAlt: "#ab8836",
     wheatStalk: "#8f7a2a", wheatHead: "#ecd06a",
-    wheatXp: 8, density: 12, grow: 12, catCount: 10, catColor: "#7c6a2c", catXp: 16,
+    wheatXp: 8, wheatMin: 26, wheatMax: 40, grow: 12, catCount: 10, catColor: "#7c6a2c", catXp: 16,
     weights: [["coin", 4], ["heart", 2], ["speed", 2], ["magnet", 1], ["shield", 1], ["rage", 1]],
   },
   {
     id: "north", name: "Мерзлая грива", sub: "редкая · дорогая",
-    cx: 1, cy: 0,
+    cells: [[0, 0], [1, 0], [2, 0]], anchor: [1, 0],
     ground: "#7e93a3", groundAlt: "#768b9b",
     wheatStalk: "#5f7484", wheatHead: "#dfe8dd",
-    wheatXp: 15, density: 6, grow: 16, catCount: 8, catColor: "#b9c9d6", catXp: 26,
+    wheatXp: 15, wheatMin: 20, wheatMax: 28, grow: 16, catCount: 16, catColor: "#b9c9d6", catXp: 26,
     weights: [["shield", 4], ["heart", 3], ["coin", 1], ["rage", 1]],
   },
   {
     id: "south", name: "Сухая степь", sub: "густая · быстрая",
-    cx: 1, cy: 2,
+    cells: [[0, 2], [1, 2], [2, 2]], anchor: [1, 2],
     ground: "#c08a4a", groundAlt: "#b78143",
     wheatStalk: "#93662c", wheatHead: "#e8b84b",
-    wheatXp: 5, density: 18, grow: 8, catCount: 12, catColor: "#a3552e", catXp: 10,
+    wheatXp: 5, wheatMin: 30, wheatMax: 40, grow: 8, catCount: 24, catColor: "#a3552e", catXp: 10,
     weights: [["speed", 4], ["magnet", 3], ["coin", 2], ["heart", 1]],
   },
   {
     id: "west", name: "Туманный луг", sub: "гусеницы · магнит",
-    cx: 0, cy: 1,
+    cells: [[0, 1]], anchor: [0, 1],
     ground: "#79995f", groundAlt: "#719157",
     wheatStalk: "#55703c", wheatHead: "#d6d97e",
-    wheatXp: 7, density: 12, grow: 11, catCount: 18, catColor: "#4c6b34", catXp: 15,
+    wheatXp: 7, wheatMin: 22, wheatMax: 38, grow: 11, catCount: 18, catColor: "#4c6b34", catXp: 15,
     weights: [["magnet", 4], ["coin", 3], ["speed", 1], ["heart", 2]],
   },
   {
     id: "east", name: "Багряная заря", sub: "ярость · опыт",
-    cx: 2, cy: 1,
+    cells: [[2, 1]], anchor: [2, 1],
     ground: "#a86752", groundAlt: "#9f5f4b",
     wheatStalk: "#7a4534", wheatHead: "#f0b271",
-    wheatXp: 11, density: 9, grow: 13, catCount: 14, catColor: "#8c3b30", catXp: 20,
+    wheatXp: 11, wheatMin: 20, wheatMax: 34, grow: 13, catCount: 14, catColor: "#8c3b30", catXp: 20,
     weights: [["rage", 4], ["shield", 2], ["speed", 2], ["coin", 1]],
   },
 ];
@@ -92,6 +96,7 @@ interface Bonus { x: number; y: number; type: BonusType; t: number; max: number 
 interface Caterpillar {
   x: number; y: number; dir: number; speed: number;
   wig: number; alive: boolean; respawn: number; region: number;
+  cellX: number; cellY: number;
 }
 interface Particle {
   x: number; y: number; vx: number; vy: number; g: number;
@@ -111,6 +116,7 @@ interface Reaper {
   speedT: number; magnetT: number; shieldT: number; shieldHits: number; rageT: number;
   alive: boolean; respawnT: number; deathHandled: boolean;
   kills: number; harvests: number; coinsRun: number;
+  skill: number; // «скилл» бота 0.5–1.5, у игрока 1
   ai: { thinkT: number; tx: number; ty: number; state: "farm" | "hunt" | "flee"; farmT: number };
 }
 
@@ -138,27 +144,17 @@ const dist2 = (ax: number, ay: number, bx: number, by: number) => {
   return dx * dx + dy * dy;
 };
 
-function crossHas(cx: number, cy: number) {
-  return CROSS.some(([x, y]) => x === cx && y === cy);
-}
 function regionIndexAt(x: number, y: number): number {
   const cx = Math.floor(x / CELL), cy = Math.floor(y / CELL);
-  return REGIONS.findIndex((r) => r.cx === cx && r.cy === cy);
+  if (cx < 0 || cx >= GRID || cy < 0 || cy >= GRID) return -1;
+  return cellRegion(cx, cy);
 }
-function clampToCross(x: number, y: number): [number, number] {
-  const cx = Math.floor(x / CELL), cy = Math.floor(y / CELL);
-  if (crossHas(cx, cy)) {
-    return [clamp(x, 6, WORLD - 6), clamp(y, 6, WORLD - 6)];
-  }
-  // угол — выталкиваем в ближайшую область креста
-  let bx = x, by = y, bd = Infinity;
-  for (const [rx, ry] of CROSS) {
-    const px = clamp(x, rx * CELL + 6, rx * CELL + CELL - 6);
-    const py = clamp(y, ry * CELL + 6, ry * CELL + CELL - 6);
-    const d = dist2(x, y, px, py);
-    if (d < bd) { bd = d; bx = px; by = py; }
-  }
-  return [bx, by];
+function clampToWorld(x: number, y: number): [number, number] {
+  return [clamp(x, 6, WORLD - 6), clamp(y, 6, WORLD - 6)];
+}
+function pointInRegion(rg: RegionDef): [number, number] {
+  const [gx, gy] = rg.cells[Math.floor(Math.random() * rg.cells.length)];
+  return [gx * CELL + rand(60, CELL - 60), gy * CELL + rand(60, CELL - 60)];
 }
 
 const NAME_A = ["Серп", "Колос", "Жнец", "Сноп", "Зерно", "Рожь", "Ячмень", "Мельник", "Хлеб", "Солома", "Косарь", "Борода", "Плуг", "Овин", "Гумно", "Ток", "Степной", "Ветер", "Гром", "Молот", "Крыло", "Клык", "Шип", "Дым", "Пепел", "Корень", "Побег", "Ливень", "Зной", "Иней", "Урожай", "Полдень"];
@@ -202,7 +198,7 @@ export class Engine {
 
   private reapers: Reaper[] = [];
   private player!: Reaper;
-  private chunks: Chunk[][] = []; // [regionIdx][25]
+  private chunks: Chunk[] = []; // 9 клеток × 25 чанков
   private wheatAll: WheatStalk[] = [];
   private bonuses: Bonus[] = [];
   private cats: Caterpillar[] = [];
@@ -285,38 +281,42 @@ export class Engine {
   /* ── world gen ── */
 
   private buildWorld() {
-    this.chunks = REGIONS.map((rg) => {
-      const list: Chunk[] = [];
-      for (let i = 0; i < 25; i++) list.push({ wheat: [] });
-      for (let cy = 0; cy < 5; cy++) {
-        for (let cx = 0; cx < 5; cx++) {
-          const ch = list[cy * 5 + cx];
-          const count = rg.density + Math.floor(rand(0, 5));
-          for (let k = 0; k < count; k++) {
-            ch.wheat.push({
-              x: rg.cx * CELL + cx * CHUNK + rand(16, CHUNK - 16),
-              y: rg.cy * CELL + cy * CHUNK + rand(16, CHUNK - 16),
-              stage: rand(0.4, 1), grow: rg.grow,
-              phase: rand(0, Math.PI * 2),
-              dead: false, cutT: 0, respawn: 0,
-              fallDir: Math.random() < 0.5 ? -1 : 1,
-              value: rg.wheatXp,
-            });
+    this.chunks = [];
+    for (let gy = 0; gy < GRID; gy++) {
+      for (let gx = 0; gx < GRID; gx++) {
+        const rg = REGIONS[cellRegion(gx, gy)];
+        for (let cy = 0; cy < 5; cy++) {
+          for (let cx = 0; cx < 5; cx++) {
+            const ch: Chunk = { wheat: [] };
+            const count = rg.wheatMin + Math.floor(rand(0, rg.wheatMax - rg.wheatMin + 1));
+            for (let k = 0; k < count; k++) {
+              ch.wheat.push({
+                x: gx * CELL + cx * CHUNK + rand(16, CHUNK - 16),
+                y: gy * CELL + cy * CHUNK + rand(16, CHUNK - 16),
+                stage: rand(0.4, 1), grow: rg.grow,
+                phase: rand(0, Math.PI * 2),
+                dead: false, cutT: 0, respawn: 0,
+                fallDir: Math.random() < 0.5 ? -1 : 1,
+                value: rg.wheatXp,
+              });
+            }
+            this.chunks.push(ch);
           }
         }
       }
-      return list;
-    });
-    this.wheatAll = this.chunks.flatMap((c) => c.flatMap((ch) => ch.wheat));
+    }
+    this.wheatAll = this.chunks.flatMap((ch) => ch.wheat);
 
     this.cats = [];
     REGIONS.forEach((rg, ri) => {
       for (let i = 0; i < rg.catCount; i++) {
+        const [gx, gy] = rg.cells[Math.floor(Math.random() * rg.cells.length)];
         this.cats.push({
-          x: rg.cx * CELL + rand(60, CELL - 60),
-          y: rg.cy * CELL + rand(60, CELL - 60),
+          x: gx * CELL + rand(60, CELL - 60),
+          y: gy * CELL + rand(60, CELL - 60),
           dir: rand(0, Math.PI * 2), speed: rand(20, 38),
           wig: rand(0, 10), alive: true, respawn: 0, region: ri,
+          cellX: gx, cellY: gy,
         });
       }
     });
@@ -333,13 +333,14 @@ export class Engine {
         level: 1, xp: 0, score: 0,
         radius: 16, pickLen: 56,
         theta: rand(0, Math.PI * 2),
-        omega: (rand(0.9, 2.1) * (Math.random() < 0.5 ? -1 : 1)),
+        omega: (rand(1.9, 4.6) * (Math.random() < 0.5 ? -1 : 1)), // кирки крутятся быстро и вразнобой
         hitCd: 0, hp: 102, maxHp: 102, lastHurt: -10,
         dashT: 0, dashCd: rand(0, 2), dashDx: 0, dashDy: 0,
         speedT: 0, magnetT: 0, shieldT: 0, shieldHits: 0, rageT: 0,
         alive: true, respawnT: 0, deathHandled: false,
         kills: 0, harvests: 0, coinsRun: 0,
         ai: { thinkT: rand(0, 0.3), tx: x, ty: y, state: "farm", farmT: 0 },
+        skill: isPlayer ? 1 : rand(0.5, 1.5),
       };
     };
     this.player = mk("ТЫ", true, skinById(this.skinId));
@@ -359,8 +360,9 @@ export class Engine {
   }
 
   private randomPoint(): [number, number] {
-    const [cx, cy] = CROSS[Math.floor(Math.random() * CROSS.length)];
-    return [cx * CELL + rand(80, CELL - 80), cy * CELL + rand(80, CELL - 80)];
+    const gx = Math.floor(Math.random() * GRID);
+    const gy = Math.floor(Math.random() * GRID);
+    return [gx * CELL + rand(80, CELL - 80), gy * CELL + rand(80, CELL - 80)];
   }
 
   private applyLevel(r: Reaper) {
@@ -370,6 +372,7 @@ export class Engine {
   }
   private speedOf(r: Reaper) {
     let s = 158 * (1 - Math.min(r.level, 40) * 0.0045);
+    if (!r.isPlayer) s *= 0.72 + 0.36 * r.skill; // боты бегают по-разному: от неспешных до быстрых
     if (r.speedT > 0) s *= 1.55;
     return s;
   }
@@ -516,9 +519,8 @@ export class Engine {
       if (!c.alive) {
         c.respawn -= dt;
         if (c.respawn <= 0) {
-          const rg = REGIONS[c.region];
-          c.x = rg.cx * CELL + rand(60, CELL - 60);
-          c.y = rg.cy * CELL + rand(60, CELL - 60);
+          c.x = c.cellX * CELL + rand(60, CELL - 60);
+          c.y = c.cellY * CELL + rand(60, CELL - 60);
           c.alive = true;
         }
         continue;
@@ -527,10 +529,10 @@ export class Engine {
       c.dir += rand(-1.6, 1.6) * dt;
       const nx = c.x + Math.cos(c.dir) * c.speed * dt;
       const ny = c.y + Math.sin(c.dir) * c.speed * dt;
-      const rg = REGIONS[c.region];
-      if (nx < rg.cx * CELL + 30 || nx > rg.cx * CELL + CELL - 30) c.dir = Math.PI - c.dir;
+      const bx = c.cellX * CELL, by = c.cellY * CELL;
+      if (nx < bx + 30 || nx > bx + CELL - 30) c.dir = Math.PI - c.dir;
       else c.x = nx;
-      if (ny < rg.cy * CELL + 30 || ny > rg.cy * CELL + CELL - 30) c.dir = -c.dir;
+      if (ny < by + 30 || ny > by + CELL - 30) c.dir = -c.dir;
       else c.y = ny;
     }
   }
@@ -539,18 +541,9 @@ export class Engine {
     this.bonusT -= dt;
     if (this.bonusT <= 0 && this.bonuses.length < 42) {
       this.bonusT = 0.7;
-      const ri = Math.floor(Math.random() * REGIONS.length);
-      const rg = REGIONS[ri];
-      let tot = 0;
-      for (const [, w] of rg.weights) tot += w;
-      let roll = Math.random() * tot;
-      let type: BonusType = "coin";
-      for (const [t, w] of rg.weights) { roll -= w; if (roll <= 0) { type = t; break; } }
-      this.bonuses.push({
-        x: rg.cx * CELL + rand(50, CELL - 50),
-        y: rg.cy * CELL + rand(50, CELL - 50),
-        type, t: 0, max: 14,
-      });
+      const rg = REGIONS[Math.floor(Math.random() * REGIONS.length)];
+      const [px, py] = pointInRegion(rg);
+      this.bonuses.push({ x: px, y: py, type: this.rollBonus(rg), t: 0, max: 14 });
     }
     for (let i = this.bonuses.length - 1; i >= 0; i--) {
       const b = this.bonuses[i];
@@ -595,7 +588,7 @@ export class Engine {
       r.vy += (iy * sp - r.vy) * Math.min(1, dt * 7);
     }
     r.x += r.vx * dt; r.y += r.vy * dt;
-    [r.x, r.y] = clampToCross(r.x, r.y);
+    [r.x, r.y] = clampToWorld(r.x, r.y);
     if (Math.hypot(r.vx, r.vy) > 30) r.dir = Math.atan2(r.vy, r.vx);
 
     // кирка срезает пшеницу
@@ -615,11 +608,11 @@ export class Engine {
   }
 
   private headHarvest(r: Reaper, hx: number, hy: number) {
-    const ri = regionIndexAt(hx, hy);
-    if (ri < 0) return;
-    const cx = clamp(Math.floor((hx - REGIONS[ri].cx * CELL) / CHUNK), 0, 4);
-    const cy = clamp(Math.floor((hy - REGIONS[ri].cy * CELL) / CHUNK), 0, 4);
-    const ch = this.chunks[ri][cy * 5 + cx];
+    const gx = Math.floor(hx / CELL), gy = Math.floor(hy / CELL);
+    if (gx < 0 || gx >= GRID || gy < 0 || gy >= GRID) return;
+    const cx = clamp(Math.floor((hx - gx * CELL) / CHUNK), 0, 4);
+    const cy = clamp(Math.floor((hy - gy * CELL) / CHUNK), 0, 4);
+    const ch = this.chunks[(gy * GRID + gx) * 25 + cy * 5 + cx];
     for (const w of ch.wheat) {
       if (w.dead || w.stage < 0.6) continue;
       if (dist2(hx, hy, w.x, w.y - 10) < 26 * 26) this.cutWheat(r, w);
@@ -663,15 +656,23 @@ export class Engine {
 
   private killCat(r: Reaper, c: Caterpillar) {
     c.alive = false; c.respawn = rand(8, 14);
+    const rg = REGIONS[c.region];
     if (r.isPlayer) r.coinsRun += 3;
     for (let i = 0; i < 6; i++) {
       this.particles.push({
         x: c.x, y: c.y, vx: rand(-90, 90), vy: rand(-90, 90), g: 160,
-        t: 0, max: rand(0.25, 0.45), size: rand(2, 4), color: REGIONS[c.region].catColor, kind: "dot",
+        t: 0, max: rand(0.25, 0.45), size: rand(2, 4), color: rg.catColor, kind: "dot",
       });
     }
-    if (r.isPlayer) audio.hit();
-    this.addXp(r, REGIONS[c.region].catXp);
+    if (r.isPlayer) {
+      audio.hit();
+      this.texts.push({ x: c.x, y: c.y - 18, txt: "+" + rg.catXp + "xp", color: "#d6d97e", t: 0, big: false });
+    }
+    this.addXp(r, rg.catXp);
+    // иногда гусеница роняет бонус своей области
+    if (Math.random() < 0.3) {
+      this.bonuses.push({ x: c.x + rand(-26, 26), y: c.y + rand(-26, 26), type: this.rollBonus(rg), t: 0, max: 12 });
+    }
   }
 
   private applyBonus(r: Reaper, type: BonusType) {
@@ -693,6 +694,13 @@ export class Engine {
   }
   private bonusLabel(t: BonusType) {
     return t === "speed" ? "ВЕТЕР!" : t === "magnet" ? "МАГНИТ!" : t === "shield" ? "ЩИТ!" : t === "rage" ? "ЯРОСТЬ!" : t === "coin" ? "МОНЕТЫ!" : "ЛЕЧЕНИЕ!";
+  }
+  private rollBonus(rg: RegionDef): BonusType {
+    let tot = 0;
+    for (const [, w] of rg.weights) tot += w;
+    let roll = Math.random() * tot;
+    for (const [t, w] of rg.weights) { roll -= w; if (roll <= 0) return t; }
+    return "coin";
   }
 
   private addXp(r: Reaper, amt: number) {
@@ -724,56 +732,91 @@ export class Engine {
     r.ai.thinkT -= dt;
     r.ai.farmT -= dt;
     if (r.ai.thinkT > 0) return;
-    r.ai.thinkT = 0.18 + Math.random() * 0.12;
+    const sk = r.skill;
+    r.ai.thinkT = (0.2 - 0.06 * sk) + Math.random() * 0.12; // скилловые думают быстрее
 
     // ближайший враг
-    let near: Reaper | null = null; let nd = 460 * 460;
+    let near: Reaper | null = null; let nd = 560 * 560;
     for (const o of this.reapers) {
       if (o === r || !o.alive) continue;
       const d = dist2(r.x, r.y, o.x, o.y);
       if (d < nd) { nd = d; near = o; }
     }
 
-    if (near && near.level > r.level + 1) {
+    // порог страха зависит от скилла: умелые жнецы храбрее
+    if (near && near.level > r.level * (0.8 + 0.45 * sk)) {
       // опаснее нас — убегаем
       r.ai.state = "flee";
       const d = Math.sqrt(nd) || 1;
-      r.ai.tx = r.x + ((r.x - near.x) / d) * 340;
-      r.ai.ty = r.y + ((r.y - near.y) / d) * 340;
-      if (r.dashCd <= 0 && nd < 260 * 260 && Math.random() < 0.55) {
+      r.ai.tx = r.x + ((r.x - near.x) / d) * 360;
+      r.ai.ty = r.y + ((r.y - near.y) / d) * 360;
+      if (r.dashCd <= 0 && nd < 280 * 280 && Math.random() < 0.6) {
         r.dashDx = (r.x - near.x) / d; r.dashDy = (r.y - near.y) / d;
-        r.dashT = 0.22; r.dashCd = 2.6;
+        r.dashT = 0.22; r.dashCd = 2.5;
         if (Math.random() < 0.3) audio.dash();
       }
-    } else if (near && r.level > near.level + 1 && Math.random() < 0.85) {
-      // слабее нас — охотимся
+    } else if (near && Math.random() < 0.55 + 0.35 * sk) {
+      // агрессия: охотимся на всех, кто не страшнее нас
       r.ai.state = "hunt";
-      r.ai.tx = near.x + near.vx * 0.3;
-      r.ai.ty = near.y + near.vy * 0.3;
+      r.ai.tx = near.x + near.vx * 0.35;
+      r.ai.ty = near.y + near.vy * 0.35;
       const d = Math.sqrt(nd) || 1;
-      if (r.dashCd <= 0 && nd > 180 * 180 && Math.random() < 0.2) {
+      if (r.dashCd <= 0 && nd > 160 * 160 && Math.random() < 0.2 + 0.3 * sk) {
         r.dashDx = (near.x - r.x) / d; r.dashDy = (near.y - r.y) / d;
-        r.dashT = 0.22; r.dashCd = 2.8;
+        r.dashT = 0.22; r.dashCd = 2.9 - 0.8 * sk;
+      }
+    } else if (Math.random() < 0.3) {
+      // лакомства: бонусы и гусеницы
+      const b = this.nearestBonus(r.x, r.y, 520);
+      const c = this.nearestCat(r.x, r.y, 440);
+      if (b && (!c || dist2(r.x, r.y, b.x, b.y) < dist2(r.x, r.y, c.x, c.y))) {
+        r.ai.state = "farm"; r.ai.tx = b.x; r.ai.ty = b.y; r.ai.farmT = rand(1.5, 2.5);
+      } else if (c) {
+        r.ai.state = "farm"; r.ai.tx = c.x; r.ai.ty = c.y; r.ai.farmT = rand(1.5, 2.5);
+      } else {
+        this.botFarm(r);
       }
     } else {
-      r.ai.state = "farm";
-      const reached = dist2(r.x, r.y, r.ai.tx, r.ai.ty) < 50 * 50;
-      if (reached || r.ai.farmT <= 0) {
-        r.ai.farmT = rand(2.2, 4);
-        // ищем колосья: сэмплим случайные из всех
-        let best: WheatStalk | null = null; let bd = Infinity;
-        for (let i = 0; i < 16; i++) {
-          const w = this.wheatAll[Math.floor(Math.random() * this.wheatAll.length)];
-          if (w.dead || w.stage < 0.5) continue;
-          const d = dist2(r.x, r.y, w.x, w.y);
-          if (d < bd) { bd = d; best = w; }
-        }
-        if (best) { r.ai.tx = best.x + rand(-30, 30); r.ai.ty = best.y + rand(-30, 30); }
-        else { [r.ai.tx, r.ai.ty] = this.randomPoint(); }
-      }
+      this.botFarm(r);
     }
-    const [tx, ty] = clampToCross(r.ai.tx, r.ai.ty);
+    const [tx, ty] = clampToWorld(r.ai.tx, r.ai.ty);
     r.ai.tx = tx; r.ai.ty = ty;
+  }
+
+  private botFarm(r: Reaper) {
+    r.ai.state = "farm";
+    const reached = dist2(r.x, r.y, r.ai.tx, r.ai.ty) < 50 * 50;
+    if (reached || r.ai.farmT <= 0) {
+      r.ai.farmT = rand(2.2, 4);
+      // ищем колосья: сэмплим случайные из всех
+      let best: WheatStalk | null = null; let bd = Infinity;
+      for (let i = 0; i < 16; i++) {
+        const w = this.wheatAll[Math.floor(Math.random() * this.wheatAll.length)];
+        if (w.dead || w.stage < 0.5) continue;
+        const d = dist2(r.x, r.y, w.x, w.y);
+        if (d < bd) { bd = d; best = w; }
+      }
+      if (best) { r.ai.tx = best.x + rand(-30, 30); r.ai.ty = best.y + rand(-30, 30); }
+      else { [r.ai.tx, r.ai.ty] = this.randomPoint(); }
+    }
+  }
+
+  private nearestBonus(x: number, y: number, maxD: number): Bonus | null {
+    let best: Bonus | null = null; let bd = maxD * maxD;
+    for (const b of this.bonuses) {
+      const d = dist2(x, y, b.x, b.y);
+      if (d < bd) { bd = d; best = b; }
+    }
+    return best;
+  }
+  private nearestCat(x: number, y: number, maxD: number): Caterpillar | null {
+    let best: Caterpillar | null = null; let bd = maxD * maxD;
+    for (const c of this.cats) {
+      if (!c.alive) continue;
+      const d = dist2(x, y, c.x, c.y);
+      if (d < bd) { bd = d; best = c; }
+    }
+    return best;
   }
 
   private respawnBot(r: Reaper) {
@@ -783,7 +826,7 @@ export class Engine {
     this.applyLevel(r); r.hp = r.maxHp;
     r.alive = true; r.deathHandled = false;
     r.speedT = 0; r.magnetT = 0; r.shieldT = 0; r.shieldHits = 0; r.rageT = 0;
-    r.dashCd = rand(1, 3);
+    r.dashCd = rand(1, 3) / r.skill;
   }
 
   /* ── combat ── */
@@ -860,11 +903,13 @@ export class Engine {
     v.alive = false;
     v.respawnT = rand(4, 8);
     a.kills++;
-    this.addXp(a, 25 + v.level * 10);
+    // за убийство — 50% опыта от уровня жертвы
+    const gained = Math.max(3, Math.round(this.xpNeed(v.level) * 0.5));
+    this.addXp(a, gained);
     if (a.isPlayer) {
       a.coinsRun += 6 + v.level * 2;
       audio.kill();
-      this.texts.push({ x: v.x, y: v.y - 24, txt: "СРЕЗАЛ " + v.name, color: "#e8c547", t: 0, big: false });
+      this.texts.push({ x: v.x, y: v.y - 24, txt: "СРЕЗАЛ " + v.name + " · +" + gained + "xp", color: "#e8c547", t: 0, big: false });
       this.pushHud(true);
     }
     for (let i = 0; i < 18; i++) {
@@ -989,51 +1034,71 @@ export class Engine {
 
   private drawGround(vx0: number, vy0: number, vx1: number, vy1: number) {
     const { ctx } = this;
-    for (let ri = 0; ri < REGIONS.length; ri++) {
-      const rg = REGIONS[ri];
-      const rx = rg.cx * CELL, ry = rg.cy * CELL;
-      if (rx > vx1 || rx + CELL < vx0 || ry > vy1 || ry + CELL < vy0) continue;
-      ctx.fillStyle = rg.ground;
-      ctx.fillRect(rx, ry, CELL, CELL);
-      // чанки: шахматная тонировка + сетка
-      for (let cy = 0; cy < 5; cy++) {
-        for (let cx = 0; cx < 5; cx++) {
-          if ((cx + cy) % 2 === 0) continue;
-          ctx.fillStyle = rg.groundAlt;
-          ctx.fillRect(rx + cx * CHUNK, ry + cy * CHUNK, CHUNK, CHUNK);
+    // клетки с чанками
+    for (let gy = 0; gy < GRID; gy++) {
+      for (let gx = 0; gx < GRID; gx++) {
+        const rx = gx * CELL, ry = gy * CELL;
+        if (rx > vx1 || rx + CELL < vx0 || ry > vy1 || ry + CELL < vy0) continue;
+        const rg = REGIONS[cellRegion(gx, gy)];
+        ctx.fillStyle = rg.ground;
+        ctx.fillRect(rx, ry, CELL, CELL);
+        // чанки: шахматная тонировка + сетка
+        for (let cy = 0; cy < 5; cy++) {
+          for (let cx = 0; cx < 5; cx++) {
+            if ((cx + cy) % 2 === 0) continue;
+            ctx.fillStyle = rg.groundAlt;
+            ctx.fillRect(rx + cx * CHUNK, ry + cy * CHUNK, CHUNK, CHUNK);
+          }
         }
+        ctx.strokeStyle = "rgba(23,18,8,0.14)";
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        for (let i = 1; i < 5; i++) {
+          ctx.moveTo(rx + i * CHUNK, ry); ctx.lineTo(rx + i * CHUNK, ry + CELL);
+          ctx.moveTo(rx, ry + i * CHUNK); ctx.lineTo(rx + CELL, ry + i * CHUNK);
+        }
+        ctx.stroke();
+        // тонкая граница клетки
+        ctx.strokeStyle = "rgba(23,18,8,0.26)";
+        ctx.lineWidth = 3;
+        ctx.strokeRect(rx + 1.5, ry + 1.5, CELL - 3, CELL - 3);
       }
-      ctx.strokeStyle = "rgba(23,18,8,0.14)";
-      ctx.lineWidth = 2;
-      ctx.beginPath();
-      for (let i = 1; i < 5; i++) {
-        ctx.moveTo(rx + i * CHUNK, ry); ctx.lineTo(rx + i * CHUNK, ry + CELL);
-        ctx.moveTo(rx, ry + i * CHUNK); ctx.lineTo(rx + CELL, ry + i * CHUNK);
+    }
+    // жирные границы областей + названия
+    for (const rg of REGIONS) {
+      let minx = 9, miny = 9, maxx = -1, maxy = -1;
+      for (const [gx, gy] of rg.cells) {
+        minx = Math.min(minx, gx); miny = Math.min(miny, gy);
+        maxx = Math.max(maxx, gx); maxy = Math.max(maxy, gy);
       }
-      ctx.stroke();
-      // граница области
+      const rx = minx * CELL, ry = miny * CELL;
+      const w = (maxx - minx + 1) * CELL, h = (maxy - miny + 1) * CELL;
+      if (rx > vx1 || rx + w < vx0 || ry > vy1 || ry + h < vy0) continue;
       ctx.strokeStyle = "rgba(23,18,8,0.45)";
       ctx.lineWidth = 8;
-      ctx.strokeRect(rx + 4, ry + 4, CELL - 8, CELL - 8);
+      ctx.strokeRect(rx + 4, ry + 4, w - 8, h - 8);
       ctx.strokeStyle = "rgba(232,197,71,0.22)";
       ctx.lineWidth = 2;
-      ctx.strokeRect(rx + 14, ry + 14, CELL - 28, CELL - 28);
-      // название на земле
+      ctx.strokeRect(rx + 14, ry + 14, w - 28, h - 28);
+      const [ax, ay] = rg.anchor;
       ctx.fillStyle = "rgba(23,18,8,0.12)";
       ctx.font = '42px "Russo One", sans-serif';
       ctx.textAlign = "center";
-      ctx.fillText(rg.name.toUpperCase(), rx + CELL / 2, ry + CELL / 2 + 14);
+      ctx.fillText(rg.name.toUpperCase(), ax * CELL + CELL / 2, ay * CELL + CELL / 2 + 14);
     }
   }
 
   private drawWheat(vx0: number, vy0: number, vx1: number, vy1: number) {
     const { ctx } = this;
-    for (let ri = 0; ri < REGIONS.length; ri++) {
-      const rg = REGIONS[ri];
-      const rx = rg.cx * CELL, ry = rg.cy * CELL;
-      if (rx > vx1 || rx + CELL < vx0 || ry > vy1 || ry + CELL < vy0) continue;
-      for (const ch of this.chunks[ri]) {
-        for (const w of ch.wheat) {
+    for (let gy = 0; gy < GRID; gy++) {
+      for (let gx = 0; gx < GRID; gx++) {
+        const rx = gx * CELL, ry = gy * CELL;
+        if (rx > vx1 || rx + CELL < vx0 || ry > vy1 || ry + CELL < vy0) continue;
+        const rg = REGIONS[cellRegion(gx, gy)];
+        const base = (gy * GRID + gx) * 25;
+        for (let ci = 0; ci < 25; ci++) {
+          const ch = this.chunks[base + ci];
+          for (const w of ch.wheat) {
           if (w.x < vx0 || w.x > vx1 || w.y < vy0 || w.y > vy1) continue;
           if (w.dead && w.cutT <= 0) continue;
           const h = 11 + 17 * w.stage;
@@ -1050,6 +1115,7 @@ export class Engine {
           }
           const sway = Math.sin(this.time * 1.7 + w.phase) * 2.6 * w.stage;
           this.drawStalk(w.x, w.y, h, sway, rg, w.stage);
+          }
         }
       }
     }
@@ -1373,9 +1439,11 @@ export class Engine {
     ctx.strokeStyle = "rgba(232,197,71,0.55)";
     ctx.lineWidth = 1.5;
     ctx.strokeRect(x0 - 4, y0 - 4, size + 8, size + 8);
-    for (const rg of REGIONS) {
-      ctx.fillStyle = rg.ground;
-      ctx.fillRect(x0 + rg.cx * CELL * s, y0 + rg.cy * CELL * s, CELL * s, CELL * s);
+    for (let gy = 0; gy < GRID; gy++) {
+      for (let gx = 0; gx < GRID; gx++) {
+        ctx.fillStyle = REGIONS[cellRegion(gx, gy)].ground;
+        ctx.fillRect(x0 + gx * CELL * s, y0 + gy * CELL * s, CELL * s + 0.5, CELL * s + 0.5);
+      }
     }
     // лидер
     let top: Reaper | null = null;
